@@ -1,6 +1,6 @@
 # Atomic Architecture
 
-一套指导软件开发项目结构的架构规范，通过将系统划分为 Runtime、Context、Component、Logic、Service 五个层次，明确各层职责与依赖关系，实现关注点分离与可维护性。
+一种将状态管理与业务执行严格分离的微函数式架构范式。通过 Runtime 与 Context 集中承载进程级与请求级状态，以原子化的纯函数 Logic 处理业务规则，以渐进提取的 Service 提供无状态计算，强制显式依赖传递，禁止隐式全局访问。
 
 ## Runtime
 
