@@ -1,6 +1,6 @@
 # Atomic Architecture
 
-一种将业务逻辑原子化、状态集中管理、调用方与被调用方分离的架构范式。通过 ApplicationContext 集中管理进程级状态，以原子化的纯函数 Logic 处理业务规则，以有状态的 Component 提供业务通用能力，以可动态启停的 Service 提供系统入口，强制显式依赖传递。
+一种用于组织应用代码的架构约定。它按职责、状态与调用关系，将代码划分为 ApplicationContext、Service、Logic、Component 和 Infrastructure，并规定各类代码的生命周期与依赖方向。
 
 ## 核心理念
 
@@ -10,57 +10,69 @@
 
 ## ApplicationContext（应用上下文）
 
-进程级单例，与进程拥有相同生命周期，在应用启动时创建。
+进程级单例，与进程同生命周期，在应用启动时创建。
 
-- 作为全局访问点，持有 Component 实例
-- Logic 通过 ApplicationContext 访问基础设施和其他组件
-- 基础设施层出现问题时，通常意味着整体服务无法工作，因此 ApplicationContext 必须保证整个应用期间都可以访问
+- 持有并管理 Component 实例
+- 提供进程级共享状态和共享能力的访问入口
+- Logic 通过 ApplicationContext 访问所需能力
+- 不负责业务编排
 
 ## Service（主动逻辑入口）
 
-系统的主动逻辑入口，如定时任务、MQ 消息接收器、HTTP 处理器等。
+系统的主动逻辑入口，如定时任务、MQ 消费者、HTTP 处理器等。
 
-- 生命周期通常与 ApplicationContext 一致，但允许可选启动和中途停止
-- 可动态启停以应对负载变化（如高并发时关闭部分服务降低负载）
+- 生命周期通常与 ApplicationContext 一致，也可按需启动与停止
 - 引用 ApplicationContext，但不负责创建 ApplicationContext
-- 编排 Logic 的调用
+- 负责组织 Logic 的调用顺序与入口级流程
+- 不承载可复用的业务规则
 
 ## Logic（原子业务逻辑）
 
-原子化的业务逻辑函数，处理具体业务规则。
+无生命周期状态的业务逻辑单元，用于表达具体业务规则。
 
-- 不持有任何生命周期状态
-- 应尽量保持纯计算风格，但允许在受控情况下通过 ApplicationContext 间接访问 Component 和 Infrastructure 能力完成业务处理
+- 负责业务规则，以及与该规则直接相关的校验、计算、转换和局部决策
+- 自身不保存跨调用状态；不得持有连接、缓存、队列、会话、后台任务等进程期状态
+- 可产生副作用，但副作用只能通过参数传入的 ApplicationContext 完成
+- 不负责资源初始化、资源销毁和系统入口监听
+- 是否为纯函数不影响归类；归类依据是是否持有生命周期状态
 - **自演化规则**：当同一逻辑在多个地方重复出现时，自然演化为新的 Logic
-- 通过 ApplicationContext 参数访问依赖
 
 ## Component（业务组件）
 
-面向对象的内部业务通用功能，具有状态。
+具有生命周期状态或资源协调责任的业务通用能力单元。
 
-- **关键特征**：面向对象设计、有状态（可在进程生命周期内保持状态）
+- 定义条件：满足以下任一条件时，可归类为 Component：需要持有跨调用状态；需要协调资源、会话、缓存、队列或状态推进；需要向多个 Logic 或 Service 提供稳定接口
+- 非定义条件：是否会被复用，不决定其是否成为 Component；无生命周期状态的复用代码仍应保持为 Logic
+- 边界约束：一个 Component 只负责一个状态域或能力域，不承担跨场景业务编排
+- 典型形式包括会话管理、状态机、任务队列、带缓存或连接复用的业务能力、外部 SDK 的业务封装层
 - 可以是基础设施的业务适配层（如基于 Redis 的用户上下文管理器）
 - 也可以是纯业务通用能力（如基于内存的任务队列、状态机）
 - 被 ApplicationContext 持有和管理
 
 ## Infrastructure（基础设施）
 
-底层基础设施资源，如数据库连接池、Redis 客户端、ES 客户端等。
+底层技术资源及其原始客户端，如数据库连接池、Redis 客户端、ES 客户端等。
 
 - 生命周期与进程相同
-- 被 Component 依赖（可选），不直接暴露给 Logic 和 Service
+- 默认由 Component 依赖（可选），不直接向 Logic 暴露具体客户端实现
+- 如确有必要供 Logic 直接使用，应由 ApplicationContext 暴露稳定能力，而不是暴露具体基础设施类型
 
 ## 依赖关系
 
-```
-Service ──引用──→ ApplicationContext ──持有──→ Component ──依赖（可选）──→ Infrastructure
-                              ↑
-Logic ──参数──→ ApplicationContext
+```mermaid
+flowchart LR
+    service[Service] -->|引用| appctx[ApplicationContext]
+    logic[Logic] -->|参数| appctx
+    appctx -->|持有| component[Component]
+    component -->|依赖（可选）| infra[Infrastructure]
 ```
 
 **约束**：
-- Logic 只能通过 ApplicationContext 访问依赖，禁止直接依赖 Component 或 Infrastructure
-- Component 可依赖 Infrastructure，但不应直接暴露给 Logic
+- Logic 只能依赖参数传入的 ApplicationContext
+- Logic 禁止直接依赖具体 Component 类型或具体 Infrastructure 类型
+- 无生命周期状态的复用代码应保持为 Logic，不应仅因复用而升级为 Component
+- Component 可依赖 Infrastructure，但对 Logic 暴露的应是业务能力，而非基础设施客户端
+- Component 应聚焦单一状态域或能力域，不承担跨场景业务编排
 - Service 引用 ApplicationContext，但 ApplicationContext 不依赖 Service
 
 ## 跨语言适配指南
@@ -68,7 +80,7 @@ Logic ──参数──→ ApplicationContext
 > **注意**：ApplicationContext 是本架构的应用上下文概念，与 Go 语言的 `context.Context`（请求上下文）不同。
 
 ### Java/Spring
-- **ApplicationContext**：Spring ApplicationContext
+- **ApplicationContext**：通常由 Spring 容器管理其生命周期
 - **Service**：@Service 或 @Component 注解的类，实现 Lifecycle 接口支持动态启停
 - **Logic**：优先使用 @FunctionalInterface 注解的类，或单公开方法的类
 - **Component**：@Component 注解的类，可通过 @Autowired 注入
