@@ -62,6 +62,7 @@
 ```mermaid
 flowchart LR
     service[Service] -->|引用| appctx[ApplicationContext]
+    service -->|调用| logic[Logic]
     logic[Logic] -->|参数| appctx
     appctx -->|持有| component[Component]
     component -->|依赖（可选）| infra[Infrastructure]
